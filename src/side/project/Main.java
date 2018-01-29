@@ -17,8 +17,9 @@ public class Main {
     public static void main(String[] args) {
         String FEEDS_URL = args[0];
         String OUTPUT_URL = args[1];
-
-        Crawler crawler = new Crawler();
+        String proxy_file = args[2];
+        String log_file = args[3];
+        Crawler crawler = new Crawler(proxy_file, log_file);
         File file = new File(OUTPUT_URL);
         ObjectMapper mapper = new ObjectMapper();
 
