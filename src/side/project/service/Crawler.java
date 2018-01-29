@@ -7,6 +7,8 @@ import org.jsoup.select.Elements;
 import side.project.model.Ads;
 
 
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.io.IOException;
 import java.net.Authenticator;
 import java.net.PasswordAuthentication;
@@ -18,10 +20,24 @@ public class Crawler {
     private static final String USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36";
     private final String authUser = "aaaa";
     private final String authPassword = "bbbb";
+    private List<String> proxyList;
     private static HashSet<String> filter = new HashSet<>();
-    public void initProxy() {
-        System.setProperty("socksProxyHost",  "199.101.97.161");
-        System.setProperty("socksProxyPort", "61336");
+
+    private int index = 0;
+
+    public void initProxy(String proxy_file) {
+        proxyList = new ArrayList<String>();
+        try (BufferedReader br = new BufferedReader(new FileReader(proxy_file))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                String[] fields = line.split(",");
+                String ip = fields[0].trim();
+                proxyList.add(ip);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
         Authenticator.setDefault(
                 new Authenticator() {
                     @Override
@@ -30,6 +46,18 @@ public class Crawler {
                     }
                 }
         );
+        System.setProperty("http.proxyUser",  authUser);
+        System.setProperty("http.proxyPassword",  authPassword);
+        System.setProperty("socksProxyPort", "61336");  //set proxy port
+    }
+
+    private void setProxy() {
+        if(index == proxyList.size()) {
+            index = 0;
+        }
+        String proxy = proxyList.get(index);
+        System.setProperty("socksProxyHost",proxy);
+        index++;
     }
 
     public void testProxy() {
@@ -46,6 +74,7 @@ public class Crawler {
             e.printStackTrace();
         }
     }
+
     public List<Ads> getAmazonProds(Ads ad) {
         String query = ad.query;
         String url = AMAZON_QUERY_URL + query;
@@ -95,7 +124,72 @@ public class Crawler {
                     list.add(newAd);
                 }
 
+            }
+        }catch (IOException e) {
+            e.printStackTrace();
+        }
+        return list;
+    }
 
+    public List<Ads> getAmazonProds(String query, double bidPrice, int campaignID, int query_group_id, Integer numPage) {
+        List<Ads> list = new ArrayList<>();
+
+        setProxy();
+
+        String url = AMAZON_QUERY_URL + query;
+        if(numPage > 1) {
+            url = url + "&page=" + numPage.toString();
+        }
+
+        try {
+            HashMap<String, String> headers = new HashMap<>();
+            headers.put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
+            headers.put("Accept-Encoding","gzip, deflate, br");
+            headers.put("Accept-Language", "en-US,en;q=0.8");
+            Document doc = Jsoup.connect(url).headers(headers).userAgent(USER_AGENT).maxBodySize(0).timeout(10000).get();
+            Elements elements = doc.getElementsByClass("s-result-item celwidget  ");
+
+            for(Integer i = 0; i < elements.size(); i++) {
+                String id = "result_" + i.toString();
+                Element prodsById = doc.getElementById(id);
+                String asin = prodsById.attr("data-asin");
+                if(!filter.add(asin)) {
+                    Ads ad = new Ads();
+                    Elements titleElementsList = prodsById.getElementsByAttribute("title");
+                    for (Element titleElement : titleElementsList) {
+                        String title = titleElement.attr("title");
+                        if(title != null || !title.isEmpty()) {
+                            ad.title = title;
+                            List<String> keywords = Utility.cleanedTokenize(title);
+                            ad.keyWords = keywords;
+                            break;
+                        }
+                    }
+                    ad.detail_url = "https://www.amazon.com/dp/" + asin;
+
+                    Elements wholes =  prodsById.getElementsByClass("sx-price-whole");
+                    for (Element whole : wholes) {
+                        if(whole.text()!=null || !whole.text().isEmpty()) {
+                            ad.price = Double.parseDouble(whole.text());
+                            break;
+                        }
+                    }
+
+                    Elements fractionals =  prodsById.getElementsByClass("sx-price-fractional");
+                    for (Element fractional : fractionals) {
+                        if(fractional.text()!=null || !fractional.text().isEmpty()) {
+                            ad.price += Double.parseDouble(fractional.text()) * 0.01;
+                            break;
+                        }
+                    }
+
+                    Element categoryElement = doc.selectFirst("#leftNavContainer > ul:nth-child(3) > div > li:nth-child(1) > span > a > h4");
+                    ad.category = categoryElement.text();
+                    ad.bidPrice = bidPrice;
+                    ad.campaignId = campaignID;
+                    ad.query_group_id = query_group_id;
+                    list.add(ad);
+                }
             }
         }catch (IOException e) {
             e.printStackTrace();
